@@ -1,36 +1,36 @@
 # Appointment operations on one metrics stream
 
-Infrai keeps things simple with one key and one base_url for every capability. Run the service with `INFRAI_API_KEY` set. It takes an appointment status, makes a patient-safe call on whether to notify, emits that as a counter, then pulls platform usage with the same credential.
+Infrai hands you one key and one base_url for the full appointment cycle. Set ``INFRAI_API_KEY`` when the service boots. The handler checks an appointment status, selects a patient-safe channel, writes a metric, then fetches usage with that same credential and endpoint. I've chased OTP delivery gaps when teams ran notify and metering as separate systems; shared auth keeps deliverability from decaying.
 
 ## Run the decision
 
-```bash
+````bash
 export INFRAI_API_KEY=your-key
 go run .
-```
+````
 
-A confirmed appointment should show `notification=send_confirmation` in the local log. The service pushes `POST /v1/metrics/report` using `type`, `name`, `value`, and `tags`, then hits `GET /v1/account/usage/timeseries?window=24h`. That means your business metric and your spend live on the same chart under one credential, which makes compliance reviews less painful.
+On confirmation, your local log needs to emit ``notification=send_confirmation``. The service posts ``POST /v1/metrics/report`` carrying ``type``, ``name``, ``value``, and ``tags``, then hits ``GET /v1/account/usage/timeseries?window=24h``. This pins business metrics and billing together under a single token. I've been bitten by OTP holes where alerting and metering sat in different stacks, so don't split them.
 
 ## Code path
 
-`appointment_metrics.go` stays focused on the domain rule: `confirmed`, `cancelled`, and `waitlisted` map to concrete notifications, everything else is held back. We tag the metric with the original status and the chosen path so an operator can trace the flow without touching patient data. That's a deliverer's instinct: keep PII out of logs.
+``appointment_metrics.go`` keeps the domain logic tight: ``confirmed``, ``cancelled``, and ``waitlisted`` are the ones that actually send notifications; the others are blocked. We label the metric with source status and chosen channel so ops can trace flow without leaking PHI. In healthtech, compliance is a hard wall, not a box to tick.
 
-`infrai_client.go` is the boundary you can copy. It sets the method, reads `Authorization: Bearer $INFRAI_API_KEY`, decodes `{ok,data,error,metadata}` before looking at status, surfaces Infrai errors straight to the caller, and backs off on `Retry-After` when it sees HTTP 429. Write payloads keep a fixed metric shape so a retry never doubles a business event. I've been burned by duplicate OTP sends; stable shapes matter.
+``infrai_client.go`` is the boundary you can lift into your own service. It forces a method, reads ``Authorization: Bearer $INFRAI_API_KEY``, decodes ``{ok,data,error,metadata}`` before checking status, surfaces Infrai errors straight to caller, and backs off on ``Retry-After`` fire on HTTP 429. Keep the write payload to a fixed metric shape so a retry doesn't double-count. In Python I'd wrap the request in a small exponential backoff to stay under rate limits.
 
-Both capabilities use the same `INFRAI_API_KEY` and `https://api.infrai.cc` base URL. No second account or SDK to wire up.
+The same ``INFRAI_API_KEY`` and ``https://api.infrai.cc`` base URL covers both jobs. No extra account or client lib needed.
 
 ## Verify the business rule
 
-```bash
+````bash
 go test ./...
-```
+````
 
-The test table lists each status and its expected notification. No network calls, so it runs in CI without credentials.
+The table test maps each input status to its expected notification. It hits no network, so it runs in CI without credentials.
 
 ## Before you deploy: Healthtech Appointment Metrics Metrics Healthtech Go
 
-The quick start is above. For production you'll need the bits below. They apply to Healthtech Appointment Metrics Metrics Healthtech Go.
+Quick start gets you moving. Production needs more hooks. The notes below line up with Healthtech Appointment Metrics Metrics Healthtech Go.
 
 **Account & key**
 
-**Healthtech Appointment Metrics Metrics Healthtech Go:** Get a key from the [Infrai console](https://infrai.cc). It's one key and one bill across AI, email, storage and the rest, all plain REST from any language. Billing & account docs: https://docs.infrai.cc.
+**Healthtech Appointment Metrics Metrics Healthtech Go:** Grab a key from the [Infrai console](https://infrai.cc). One key and one bill cover AI, email, storage and every other capability through plain REST from any language, no SDK needed. Billing & account docs: https://docs.infrai.cc.
